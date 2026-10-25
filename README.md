@@ -70,7 +70,12 @@ olist_marketplace_analytics/
 │   ├── business_findings.md
 │   └── data_quality_report.md
 ├── sql/
-│   └── business_analysis.sql
+│   ├── 01_data_import_and_staging.sql
+│   ├── 02_staging_validation.sql
+│   ├── 03_analytics_model.sql
+│   ├── 04_model_validation.sql
+│   ├── 05_business_analysis.sql
+│   └── 06_tableau_views.sql
 └── tableau/
     └── screenshots/
 ```

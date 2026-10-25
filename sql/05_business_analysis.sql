@@ -1,4 +1,4 @@
-/* Olist Marketplace Analytics — final portfolio queries (MySQL 8+) */
+/* Olist Marketplace Analytics — 05 Final business-analysis queries (MySQL 8+) */
 
 /* 1. Like-for-like growth: Jan-Aug 2017 vs Jan-Aug 2018 */
 WITH order_value AS (

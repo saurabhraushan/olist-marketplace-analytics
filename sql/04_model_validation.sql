@@ -1,4 +1,5 @@
-/* Olist Marketplace Analytics — 02 Data validation */
+/* Olist Marketplace Analytics — 04 Model and business-rule validation
+   Run after 03_analytics_model.sql creates fact and dimension tables. */
 USE olist_analytics;
 
 /* Row-count checkpoint */

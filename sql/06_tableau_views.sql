@@ -1,4 +1,4 @@
-/* Olist Marketplace Analytics — 05 Tableau analytical views */
+/* Olist Marketplace Analytics — 06 Tableau analytical views */
 USE olist_analytics;
 
 CREATE OR REPLACE VIEW vw_tableau_order_summary AS

@@ -1,4 +1,5 @@
-/* Olist Marketplace Analytics — 03 Analytics-ready model */
+/* Olist Marketplace Analytics — 03 Analytics-ready model
+   Run only after 02_staging_validation.sql passes. */
 USE olist_analytics;
 
 CREATE TABLE dim_customer AS
