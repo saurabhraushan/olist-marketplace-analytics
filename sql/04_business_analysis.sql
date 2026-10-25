@@ -162,3 +162,110 @@ FROM fact_payments
 WHERE payment_type='credit_card' AND payment_value>0 AND payment_installments>=1
 GROUP BY order_id;
 
+/* 13. Comparable category growth */
+WITH category_year AS (
+ SELECT COALESCE(p.product_category_name_english,'Unknown') category,
+        YEAR(o.order_purchase_timestamp) order_year,SUM(i.item_value) category_value
+ FROM fact_orders o JOIN fact_order_items i USING(order_id)
+ LEFT JOIN dim_product p USING(product_id)
+ WHERE YEAR(o.order_purchase_timestamp) IN(2017,2018)
+   AND MONTH(o.order_purchase_timestamp) BETWEEN 1 AND 8
+ GROUP BY category,YEAR(o.order_purchase_timestamp)
+)
+SELECT category,
+ SUM(CASE WHEN order_year=2017 THEN category_value ELSE 0 END) value_2017,
+ SUM(CASE WHEN order_year=2018 THEN category_value ELSE 0 END) value_2018,
+ ROUND(SUM(CASE WHEN order_year=2018 THEN category_value ELSE -category_value END),2) incremental_value
+FROM category_year GROUP BY category ORDER BY incremental_value DESC;
+
+/* 14. Freight burden by customer state */
+WITH order_economics AS (
+ SELECT order_id,SUM(price) product_value,SUM(freight_value) freight_value,
+        SUM(item_value) gross_ordered_value,COUNT(*) item_count
+ FROM fact_order_items GROUP BY order_id
+)
+SELECT c.customer_state,COUNT(*) total_orders,SUM(e.item_count) total_items,
+ ROUND(SUM(e.product_value),2) product_value,ROUND(SUM(e.freight_value),2) freight_value,
+ ROUND(AVG(e.freight_value),2) avg_freight_per_order,
+ ROUND(100*SUM(e.freight_value)/SUM(e.gross_ordered_value),2) freight_share_pct
+FROM order_economics e JOIN fact_orders o USING(order_id)
+JOIN dim_customer c USING(customer_id)
+GROUP BY c.customer_state HAVING COUNT(*)>=100 ORDER BY freight_share_pct DESC;
+
+/* 15. Delay buckets and review outcomes */
+WITH reviewed_orders AS (
+ SELECT order_id,AVG(review_score) review_score FROM fact_reviews GROUP BY order_id
+), delivery AS (
+ SELECT o.order_id,r.review_score,
+ DATEDIFF(DATE(o.order_delivered_customer_date),DATE(o.order_estimated_delivery_date)) delay_days
+ FROM fact_orders o LEFT JOIN reviewed_orders r USING(order_id) WHERE o.is_delivered=1
+)
+SELECT CASE WHEN delay_days<=0 THEN 'On time or early'
+            WHEN delay_days<=3 THEN '1-3 days late'
+            WHEN delay_days<=7 THEN '4-7 days late'
+            WHEN delay_days<=14 THEN '8-14 days late'
+            ELSE '15+ days late' END delay_bucket,
+ COUNT(*) total_orders,COUNT(review_score) reviewed_orders,
+ ROUND(AVG(delay_days),2) avg_delay_days,ROUND(AVG(review_score),2) avg_review_score,
+ ROUND(100*AVG(review_score<=2),2) low_rating_rate_pct,
+ ROUND(100*AVG(review_score>=4),2) positive_rating_rate_pct
+FROM delivery GROUP BY delay_bucket
+ORDER BY MIN(CASE WHEN delay_days<=0 THEN 1 WHEN delay_days<=3 THEN 2
+                  WHEN delay_days<=7 THEN 3 WHEN delay_days<=14 THEN 4 ELSE 5 END);
+
+/* 16. Payment combinations for multi-record orders */
+WITH valid AS (
+ SELECT * FROM fact_payments WHERE payment_type IS NOT NULL
+ AND payment_type<>'not_defined' AND payment_value>0
+), x AS (
+ SELECT order_id,COUNT(*) payment_records,
+ GROUP_CONCAT(DISTINCT payment_type ORDER BY payment_type SEPARATOR ' + ') payment_combination,
+ SUM(payment_value) payment_value
+ FROM valid GROUP BY order_id HAVING COUNT(*)>1
+)
+SELECT payment_combination,COUNT(*) total_orders,
+ ROUND(100*COUNT(*)/SUM(COUNT(*)) OVER(),2) share_of_multi_record_orders_pct,
+ ROUND(AVG(payment_records),2) avg_payment_records,MAX(payment_records) maximum_payment_records,
+ ROUND(AVG(payment_value),2) avg_payment_value
+FROM x GROUP BY payment_combination ORDER BY total_orders DESC;
+
+/* 17. Credit-card installment buckets */
+WITH card_orders AS (
+ SELECT order_id,MAX(payment_installments) installments,SUM(payment_value) payment_value
+ FROM fact_payments WHERE payment_type='credit_card' AND payment_value>0
+ AND payment_installments>=1 GROUP BY order_id
+)
+SELECT CASE WHEN installments=1 THEN '1 installment'
+            WHEN installments<=3 THEN '2-3 installments'
+            WHEN installments<=6 THEN '4-6 installments'
+            WHEN installments<=9 THEN '7-9 installments'
+            WHEN installments<=12 THEN '10-12 installments'
+            ELSE '13+ installments' END installment_bucket,
+ COUNT(*) total_orders,ROUND(100*COUNT(*)/SUM(COUNT(*)) OVER(),2) order_share_pct,
+ ROUND(AVG(installments),2) avg_installments,ROUND(AVG(payment_value),2) avg_payment_value,
+ MIN(payment_value) minimum_payment_value,MAX(payment_value) maximum_payment_value
+FROM card_orders GROUP BY installment_bucket
+ORDER BY MIN(installments);
+
+/* 18. Seller benchmark cohort and risk inputs */
+WITH order_seller AS (
+ SELECT i.order_id,COUNT(DISTINCT i.seller_id) seller_count,MIN(i.seller_id) seller_id,
+        COUNT(*) item_count,SUM(i.item_value) order_value,
+        AVG(o.order_delivered_carrier_date>i.shipping_limit_date) late_shipping
+ FROM fact_order_items i JOIN fact_orders o USING(order_id) GROUP BY i.order_id
+), reviews AS (SELECT order_id,AVG(review_score) score FROM fact_reviews GROUP BY order_id),
+seller AS (
+ SELECT s.seller_id,COUNT(*) total_orders,SUM(s.item_count) total_items,
+        SUM(s.order_value) total_order_value,AVG(s.late_shipping) late_shipping_rate,
+        AVG(o.is_late) late_delivery_rate,AVG(r.score) avg_review_score,
+        AVG(r.score<=2) low_rating_rate
+ FROM order_seller s JOIN fact_orders o USING(order_id) JOIN reviews r USING(order_id)
+ WHERE s.seller_count=1 AND o.is_delivered=1 GROUP BY s.seller_id HAVING COUNT(*)>=20
+)
+SELECT *,ROUND(100*late_shipping_rate,2) late_shipping_rate_pct,
+ ROUND(100*late_delivery_rate,2) late_delivery_rate_pct,
+ ROUND(100*low_rating_rate,2) low_rating_rate_pct,
+ ROUND(100*AVG(late_delivery_rate) OVER(),2) benchmark_late_delivery_rate,
+ ROUND(AVG(avg_review_score) OVER(),2) benchmark_avg_review_score
+FROM seller;
+
